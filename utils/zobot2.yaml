@@ -16,7 +16,7 @@ services:
 
   zobot:
     container_name: zobot
-    image: brightforest/zobot:2.0.0
+    image: brightforest/zobot:2.0.1
     environment:
       BOT_TOKEN: '-'
       CHECK_RATE_SECONDS: '60'

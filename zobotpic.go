@@ -477,7 +477,7 @@ func (b *Bot) UpdatesReciever() {
 			s := Subscriber{
 				ChatId:   update.Message.Chat.ID,
 				Username: update.Message.Chat.UserName,
-				IsActive: true,
+				IsActive: false,
 			}
 			b.subscribers[update.Message.Chat.ID] = &s
 			b.AddSubsToDB(&s)
@@ -487,6 +487,8 @@ func (b *Bot) UpdatesReciever() {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "")
 
 		switch update.Message.Command() {
+		case "start":
+			msg.Text = "Жмём /disco чтобы начать залив мемасов."
 		case "help":
 			msg.Text = "Можно прислать команду /pause, чтобы остановить поток шитшторма.\nКоманда /disco возобновит залив мемасов."
 		case "pause":
