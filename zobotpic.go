@@ -2,18 +2,27 @@ package main
 
 import (
 	"crypto/tls"
+	"database/sql"
 	"encoding/json"
 	"github.com/go-telegram-bot-api/telegram-bot-api"
+	_ "github.com/lib/pq"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"regexp"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
+)
+
+const (
+	GET_SUBSCRIBERS = "SELECT \"chatid\", \"username\", \"isactive\" FROM public.\"subscribers\""
+	ADD_SUBSCRIBER  = "INSERT INTO public.\"subscribers\" (chatid, username, isactive) VALUES ($1, $2, $3)"
+	CHANGE_STATE    = "UPDATE public.\"subscribers\" SET isactive = $2 WHERE \"chatid\" = $1"
+	GET_REGEXES     = "SELECT \"reg\" FROM public.\"regexes\";"
 )
 
 var (
@@ -46,6 +55,13 @@ func LogInit(
 		log.Ldate|log.Ltime|log.Lshortfile)
 }
 
+type Bot struct {
+	is          *ImagesSender
+	subscribers map[int64]*Subscriber
+	pgConn      string
+	db          *sql.DB
+}
+
 type ImagesSender struct {
 	Bot                *tgbotapi.BotAPI
 	ImagesFromThreads  map[string]string
@@ -54,8 +70,13 @@ type ImagesSender struct {
 	ThreadsNumberServe map[string]bool
 	CheckRate          int
 	TelegramBotToken   string
-	TelegramGroupId    int64
 	FindRegexes        []string
+}
+
+type Subscriber struct {
+	ChatId   int64
+	Username string
+	IsActive bool
 }
 
 type FileMessage struct {
@@ -195,19 +216,22 @@ func (imageSender *ImagesSender) ParseScheduler() {
 	}
 }
 
-func (imageSender *ImagesSender) SendScheduler() {
+func (b *Bot) SendScheduler() {
 	for {
 		select {
-		case filemessage := <-imageSender.FileSenderChannel:
-			time.Sleep(3 * time.Second)
-			imageSender.SendToChat(filemessage.Link)
+		case filemessage := <-b.is.FileSenderChannel:
+			for _, s := range b.subscribers {
+				if s.IsActive {
+					b.is.SendToChat(s.ChatId, filemessage.Link)
+					time.Sleep(3 * time.Second)
+				}
+			}
 		}
 	}
 }
 
-func (imageSender *ImagesSender) SendToChat(message string) {
-	time.Sleep(1 * time.Second)
-	msg := tgbotapi.NewMessage(imageSender.TelegramGroupId, message)
+func (imageSender *ImagesSender) SendToChat(chatid int64, message string) {
+	msg := tgbotapi.NewMessage(chatid, message)
 	imageSender.Bot.Send(msg)
 }
 
@@ -217,6 +241,7 @@ func getBot(token string) *tgbotapi.BotAPI {
 		Error.Println("Bot cannot loaded:", err)
 		return nil
 	} else {
+		Info.Println("Bot authorized with account:", bot.Self.UserName)
 		return bot
 	}
 }
@@ -244,29 +269,153 @@ func getTelegramBotToken() string {
 	}
 }
 
-func getTelegramGroupId() int64 {
-	groupId := os.Getenv("GROUP_ID")
-	if groupId == "" {
-		Error.Println("Unable to get group id")
-		return 0
-	} else {
-		getIntId, err := strconv.ParseInt(groupId, 10, 64)
-		if err != nil {
-			Error.Println("Unable to get group id")
-			return 0
-		} else {
-			return getIntId
+func CreatePGConnString() string {
+	pgconn := make(map[string]string)
+	pgconn["POSTGRES_USER"] = os.Getenv("POSTGRES_USER")
+	pgconn["POSTGRES_PASSWORD"] = os.Getenv("POSTGRES_PASSWORD")
+	pgconn["POSTGRES_HOST"] = os.Getenv("POSTGRES_HOST")
+	pgconn["POSTGRES_PORT"] = os.Getenv("POSTGRES_PORT")
+	pgconn["POSTGRES_DB"] = os.Getenv("POSTGRES_DB")
+	for k, v := range pgconn {
+		if v == "" {
+			Error.Println("Env variable for database is empty:", k)
+			os.Exit(1)
 		}
+	}
+	b := strings.Builder{}
+	b.WriteString("postgresql://")
+	b.WriteString(pgconn["POSTGRES_USER"])
+	b.WriteString(":")
+	b.WriteString(pgconn["POSTGRES_PASSWORD"])
+	b.WriteString("@")
+	b.WriteString(pgconn["POSTGRES_HOST"])
+	b.WriteString(":")
+	b.WriteString(pgconn["POSTGRES_PORT"])
+	b.WriteString("/")
+	b.WriteString(pgconn["POSTGRES_DB"])
+	b.WriteString("?sslmode=disable")
+	return b.String()
+}
+
+func (b *Bot) GetDBConn() {
+	db, err := sql.Open("postgres", b.pgConn)
+	if err != nil {
+		Error.Println(err)
+		os.Exit(1)
+	}
+	b.db = db
+}
+
+func (b *Bot) GetSubsFromDB() {
+	stmt, err := b.db.Prepare(GET_SUBSCRIBERS)
+	if err != nil {
+		Error.Println(err)
+		os.Exit(1)
+	}
+	rows, err1 := stmt.Query()
+	if err1 != nil {
+		Error.Println(err)
+		os.Exit(1)
+	}
+	defer rows.Close()
+	defer stmt.Close()
+	for rows.Next() {
+		var (
+			chatid   int64
+			username string
+			isactive bool
+		)
+		err := rows.Scan(
+			&chatid,
+			&username,
+			&isactive,
+		)
+		if err != nil {
+			Error.Println(err)
+		}
+		s := Subscriber{
+			ChatId:   chatid,
+			Username: username,
+			IsActive: isactive,
+		}
+		b.subscribers[s.ChatId] = &s
+	}
+	Info.Println("Subscribers loaded count:", len(b.subscribers))
+}
+
+func (b *Bot) AddSubsToDB(s *Subscriber) {
+	stmt, err := b.db.Prepare(ADD_SUBSCRIBER)
+	if err != nil {
+		Error.Println(err)
+	}
+	defer stmt.Close()
+	if _, err := stmt.Exec(
+		s.ChatId,
+		s.Username,
+		s.IsActive,
+	); err != nil {
+		Error.Println(err)
+	}
+}
+
+func (b *Bot) ChangeSubsState(chatid int64, requestedState bool) {
+	b.subscribers[chatid].IsActive = requestedState
+	stmt, err := b.db.Prepare(CHANGE_STATE)
+	if err != nil {
+		Error.Println(err)
+	}
+	defer stmt.Close()
+	if _, err := stmt.Exec(
+		chatid,
+		requestedState,
+	); err != nil {
+		Error.Println(err)
+	}
+}
+
+func (b *Bot) GetRegexesFromDB() {
+	stmt, err := b.db.Prepare(GET_REGEXES)
+	if err != nil {
+		Error.Println(err)
+		os.Exit(1)
+	}
+	rows, err1 := stmt.Query()
+	if err1 != nil {
+		Error.Println(err)
+		os.Exit(1)
+	}
+	defer rows.Close()
+	defer stmt.Close()
+	ra := []string{}
+	for rows.Next() {
+		var (
+			reg string
+		)
+		err := rows.Scan(
+			&reg,
+		)
+		if err != nil {
+			Error.Println(err)
+		}
+		ra = append(ra, reg)
+	}
+	if len(ra) < 1 {
+		Error.Println("Regexes table in DB is empty.")
+		os.Exit(1)
+	}
+	b.is.FindRegexes = ra
+}
+
+func (b *Bot) UpdateRegexesScheduler() {
+	for {
+		time.Sleep(60 * time.Second)
+		b.GetRegexesFromDB()
 	}
 }
 
 func (sender *ImagesSender) SelfTestEnvVariables() {
 	if sender.TelegramBotToken == "" {
 		Error.Println("Telegram bot token is not defined.")
-		os.Exit(1)
-	}
-	if sender.TelegramGroupId == 0 {
-		Error.Println("Telegram group ID is not defined.")
 		os.Exit(1)
 	}
 	Info.Println("Environment variables ready.")
@@ -278,22 +427,7 @@ func OSListener(osChannel chan os.Signal) {
 	os.Exit(0)
 }
 
-func GetRegexes() []string {
-	return []string{
-		".*ЗАСМЕ.*",
-		".*ОБОСРА.*",
-		".*зАсМе.*",
-		"(?i).*засме.*",
-		".*ЗАСМІЯВ.*",
-	}
-}
-
-func init() {
-	LogInit(ioutil.Discard, os.Stdout, os.Stdout, os.Stdout)
-}
-
-func main() {
-	GetRegexes()
+func Load() {
 	sender := ImagesSender{
 		nil,
 		make(map[string]string),
@@ -302,16 +436,80 @@ func main() {
 		make(map[string]bool),
 		getCheckerRateFromEnv(),
 		getTelegramBotToken(),
-		getTelegramGroupId(),
-		GetRegexes(),
+		nil,
 	}
 	sender.SelfTestEnvVariables()
 	sender.Bot = getBot(sender.TelegramBotToken)
-	go sender.SendScheduler()
-	go sender.ParseScheduler()
+	b := Bot{
+		is:          &sender,
+		subscribers: make(map[int64]*Subscriber),
+		pgConn:      CreatePGConnString(),
+		db:          nil,
+	}
+	b.GetDBConn()
+	b.GetRegexesFromDB()
+	b.GetSubsFromDB()
+	go b.SendScheduler()
+	go b.is.ParseScheduler()
+	go b.UpdateRegexesScheduler()
+	go b.UpdatesReciever()
 	Info.Println("Bot started.")
 	var gracefulStop = make(chan os.Signal)
 	signal.Notify(gracefulStop, syscall.SIGTERM)
 	signal.Notify(gracefulStop, syscall.SIGINT)
 	OSListener(gracefulStop)
+}
+
+func (b *Bot) UpdatesReciever() {
+	u := tgbotapi.NewUpdate(0)
+	u.Timeout = 60
+	updates, _ := b.is.Bot.GetUpdatesChan(u)
+	for update := range updates {
+		if update.Message == nil { // ignore any non-Message updates
+			continue
+		}
+
+		if !update.Message.IsCommand() { // ignore any non-command Messages
+			continue
+		}
+
+		if _, ok := b.subscribers[update.Message.Chat.ID]; !ok {
+			s := Subscriber{
+				ChatId:   update.Message.Chat.ID,
+				Username: update.Message.Chat.UserName,
+				IsActive: true,
+			}
+			b.subscribers[update.Message.Chat.ID] = &s
+			b.AddSubsToDB(&s)
+			Info.Println("New subscriber added with username:", update.Message.Chat.UserName)
+		}
+
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "")
+
+		switch update.Message.Command() {
+		case "help":
+			msg.Text = "Можно прислать команду /pause, чтобы остановить поток шитшторма.\nКоманда /disco возобновит залив мемасов."
+		case "pause":
+			msg.Text = "Мемсный шторм остановлен."
+			b.ChangeSubsState(update.Message.Chat.ID, false)
+			Info.Println(update.Message.Chat.UserName, "paused bot.")
+		case "disco":
+			msg.Text = "Мемсный шторм включён."
+			b.ChangeSubsState(update.Message.Chat.ID, true)
+			Info.Println(update.Message.Chat.UserName, "activated bot.")
+		default:
+			msg.Text = "Неизвестная команда."
+		}
+		if _, err := b.is.Bot.Send(msg); err != nil {
+			Error.Println(err)
+		}
+	}
+}
+
+func init() {
+	LogInit(io.Discard, os.Stdout, os.Stdout, os.Stdout)
+}
+
+func main() {
+	Load()
 }

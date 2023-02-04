@@ -1,0 +1,37 @@
+version: '3.5'
+
+services:
+  postgres:
+    container_name: postgres_container
+    image: postgres:15
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: -
+      PGDATA: /data/postgres
+    volumes:
+      - postgres:/data/postgres
+    networks:
+      - postgres
+    restart: unless-stopped
+
+  zobot:
+    container_name: zobot
+    image: brightforest/zobot:2.0.0
+    environment:
+      BOT_TOKEN: '-'
+      CHECK_RATE_SECONDS: '60'
+      POSTGRES_DB: zobot
+      POSTGRES_HOST: postgres
+      POSTGRES_PASSWORD: -
+      POSTGRES_PORT: '5432'
+      POSTGRES_USER: zobot
+    networks:
+      - postgres
+    restart: unless-stopped
+
+networks:
+  postgres:
+    driver: bridge
+
+volumes:
+  postgres:

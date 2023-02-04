@@ -1,0 +1,13 @@
+[Unit]
+Description=Zasmeyalsya-Obosralsya Bot
+Requires=docker.service
+After=docker.service
+
+[Service]
+Restart=Always
+WorkingDirectory=/etc/zobot2
+ExecStart=/usr/local/bin/docker-compose -f zobot2.yaml up
+ExecStop=/usr/local/bin/docker-compose -f zobot2.yaml down
+
+[Install]
+WantedBy=multi-user.target
