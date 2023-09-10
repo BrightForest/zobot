@@ -125,7 +125,7 @@ func (imageSender *ImagesSender) GetThreadsList() {
 
 	errors := decode.Decode(&list)
 	if errors != nil {
-		Error.Println(err)
+		Error.Println(errors)
 		return
 	}
 	var rSlice []*regexp.Regexp
@@ -183,7 +183,7 @@ func (imageSender *ImagesSender) GetPicturesListFromThread(threadNumber string) 
 	var tData ThreadData
 	errors := decode.Decode(&tData)
 	if errors != nil {
-		Error.Println(err)
+		Error.Println(errors)
 		return
 	}
 	for _, file := range tData.Threads {
@@ -314,7 +314,7 @@ func (b *Bot) GetSubsFromDB() {
 	}
 	rows, err1 := stmt.Query()
 	if err1 != nil {
-		Error.Println(err)
+		Error.Println(err1)
 		os.Exit(1)
 	}
 	defer rows.Close()
@@ -349,12 +349,12 @@ func (b *Bot) AddSubsToDB(s *Subscriber) {
 		Error.Println(err)
 	}
 	defer stmt.Close()
-	if _, err := stmt.Exec(
+	if _, err1 := stmt.Exec(
 		s.ChatId,
 		s.Username,
 		s.IsActive,
-	); err != nil {
-		Error.Println(err)
+	); err1 != nil {
+		Error.Println(err1)
 	}
 }
 
@@ -365,11 +365,11 @@ func (b *Bot) ChangeSubsState(chatid int64, requestedState bool) {
 		Error.Println(err)
 	}
 	defer stmt.Close()
-	if _, err := stmt.Exec(
+	if _, err1 := stmt.Exec(
 		chatid,
 		requestedState,
-	); err != nil {
-		Error.Println(err)
+	); err1 != nil {
+		Error.Println(err1)
 	}
 }
 
@@ -381,7 +381,7 @@ func (b *Bot) GetRegexesFromDB() {
 	}
 	rows, err1 := stmt.Query()
 	if err1 != nil {
-		Error.Println(err)
+		Error.Println(err1)
 		os.Exit(1)
 	}
 	defer rows.Close()
