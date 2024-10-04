@@ -145,12 +145,14 @@ func (imageSender *ImagesSender) GetThreadsList() {
 		if finded {
 			imageSender.ThreadsNumberServe[strconv.Itoa(thread.Num)] = true
 			imageSender.GetPicturesListFromThread(strconv.Itoa(thread.Num))
+			Info.Println("Thread", thread.Num, "added to threads list.")
 			lastThreads = append(lastThreads, strconv.Itoa(thread.Num))
 		}
 	}
 	for _, threadNum := range lastThreads {
 		if _, ok := imageSender.ThreadsNumberServe[threadNum]; !ok {
 			delete(imageSender.ThreadsNumberServe, threadNum)
+			Info.Println("Thread", threadNum, "was deleted from threads list.")
 			for _, thread := range imageSender.ImagesFromThreads {
 				delete(imageSender.ImagesFromThreads, thread)
 			}
@@ -232,7 +234,10 @@ func (b *Bot) SendScheduler() {
 
 func (imageSender *ImagesSender) SendToChat(chatid int64, message string) {
 	msg := tgbotapi.NewMessage(chatid, message)
-	imageSender.Bot.Send(msg)
+	_, err := imageSender.Bot.Send(msg)
+	if err != nil {
+		Error.Println(err.Error())
+	}
 }
 
 func getBot(token string) *tgbotapi.BotAPI {
