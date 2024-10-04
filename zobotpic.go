@@ -74,9 +74,10 @@ type ImagesSender struct {
 }
 
 type Subscriber struct {
-	ChatId   int64
-	Username string
-	IsActive bool
+	ChatId        int64
+	Username      string
+	IsActive      bool
+	HasBlockedBot bool
 }
 
 type FileMessage struct {
@@ -223,8 +224,8 @@ func (b *Bot) SendScheduler() {
 		select {
 		case filemessage := <-b.is.FileSenderChannel:
 			for _, s := range b.subscribers {
-				if s.IsActive {
-					b.is.SendToChat(s.ChatId, filemessage.Link)
+				if s.IsActive && !s.HasBlockedBot {
+					b.is.SendToChat(s, filemessage.Link, b)
 					time.Sleep(3 * time.Second)
 				}
 			}
@@ -232,12 +233,22 @@ func (b *Bot) SendScheduler() {
 	}
 }
 
-func (imageSender *ImagesSender) SendToChat(chatid int64, message string) {
-	msg := tgbotapi.NewMessage(chatid, message)
+func (imageSender *ImagesSender) SendToChat(s *Subscriber, message string, b *Bot) {
+	msg := tgbotapi.NewMessage(s.ChatId, message)
 	_, err := imageSender.Bot.Send(msg)
 	if err != nil {
-		Error.Println(err.Error())
+		imageSender.SendErrorProcessing(err, s, b)
 	}
+}
+
+func (imageSender *ImagesSender) SendErrorProcessing(sendErr error, s *Subscriber, b *Bot) {
+	st := regexp.MustCompile(".*Forbidden.*")
+	if st.MatchString(sendErr.Error()) {
+		b.subscribers[s.ChatId].HasBlockedBot = true
+		Info.Println(s.Username, "with chatId", s.ChatId, "has disabled bot.")
+		return
+	}
+	Error.Println(sendErr.Error())
 }
 
 func getBot(token string) *tgbotapi.BotAPI {
@@ -339,9 +350,10 @@ func (b *Bot) GetSubsFromDB() {
 			Error.Println(err)
 		}
 		s := Subscriber{
-			ChatId:   chatid,
-			Username: username,
-			IsActive: isactive,
+			ChatId:        chatid,
+			Username:      username,
+			IsActive:      isactive,
+			HasBlockedBot: false,
 		}
 		b.subscribers[s.ChatId] = &s
 	}
