@@ -70,6 +70,7 @@ type ImagesSender struct {
 	ThreadsNumberServe map[string]bool
 	CheckRate          int
 	TelegramBotToken   string
+	DvochURL           string
 	FindRegexes        []string
 }
 
@@ -112,7 +113,7 @@ func (imageSender *ImagesSender) GetThreadsList() {
 	client := &http.Client{Transport: tr}
 	getThreadsRequest, _ := http.NewRequest(
 		"GET",
-		"https://2ch.hk/b/threads.json",
+		imageSender.DvochURL+"/b/threads.json",
 		nil,
 	)
 	resp, err := client.Do(getThreadsRequest)
@@ -173,7 +174,7 @@ func (imageSender *ImagesSender) GetPicturesListFromThread(threadNumber string) 
 	client := &http.Client{Transport: tr}
 	getThreadsRequest, _ := http.NewRequest(
 		"GET",
-		"https://2ch.hk/b/res/"+threadNumber+".json",
+		imageSender.DvochURL+"/b/res/"+threadNumber+".json",
 		nil,
 	)
 	resp, err := client.Do(getThreadsRequest)
@@ -192,7 +193,7 @@ func (imageSender *ImagesSender) GetPicturesListFromThread(threadNumber string) 
 	for _, file := range tData.Threads {
 		for _, post := range file.Posts {
 			for _, file := range post.Files {
-				link := "https://2ch.hk" + file.Path
+				link := imageSender.DvochURL + file.Path
 				imageSender.ImagesFromThreads[link] = threadNumber
 			}
 		}
@@ -282,6 +283,16 @@ func getTelegramBotToken() string {
 		return ""
 	} else {
 		return token
+	}
+}
+
+func getDvochURL() string {
+	turl := os.Getenv("2CH_URL")
+	if turl == "" {
+		Error.Println("Unable to get URL for 2ch /b/ threads.")
+		return ""
+	} else {
+		return turl
 	}
 }
 
@@ -453,6 +464,7 @@ func Load() {
 		make(map[string]bool),
 		getCheckerRateFromEnv(),
 		getTelegramBotToken(),
+		getDvochURL(),
 		nil,
 	}
 	sender.SelfTestEnvVariables()
