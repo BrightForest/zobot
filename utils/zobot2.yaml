@@ -16,7 +16,7 @@ services:
 
   zobot:
     container_name: zobot
-    image: brightforest/zobot:2.0.8
+    image: brightforest/zobot:3.0.0
     environment:
       2CH_URL: "https://2ch.su"
       BOT_TOKEN: '-'

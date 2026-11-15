@@ -7,7 +7,7 @@
 
 CREATE ROLE zobot WITH
     LOGIN
-    SUPERUSER
+    NOSUPERUSER
     INHERIT
     CREATEDB
     CREATEROLE
@@ -61,7 +61,8 @@ ALTER TABLE public.regexes OWNER TO postgres;
 CREATE TABLE public.subscribers (
                                     chatid bigint NOT NULL,
                                     username character varying NOT NULL,
-                                    isactive boolean NOT NULL
+                                    isactive boolean NOT NULL,
+                                    blocked boolean NOT NULL DEFAULT false
 );
 
 
